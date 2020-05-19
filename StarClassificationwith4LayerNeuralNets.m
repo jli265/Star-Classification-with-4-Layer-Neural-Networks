@@ -31,29 +31,44 @@ startype(startype==0)=6;
 
 
 data_clean=[(data{:,1:4} -mean(data{:,1:4}))./std(data{:,1:4})  ,starcolor,spectralclass,startype]; % Feature Scaling
+X=data_clean(:,1:end-1);
+y=data_clean(:,end);
 
-% split train and test data
+% 6-2-2 split train, validation and test data
 
-randrow=randperm(size(data, 1));
-m=round(size(data,1)*0.8); %train sample size m
-data_train=data_clean(randrow(1:m),:);
-data_test=data_clean(randrow(m+1:end),:);
-X_train=data_train(:,1:end-1);
-y_train=data_train(:,end);
-X_test=data_test(:,1:end-1);
-y_test=data_test(:,end);
+m = size(X, 1); % m = Number of examples for training, validation and test
+
+randrow=randperm(size(X, 1));
+m_train=round(size(X,1)*0.6);
+m_validation=round(size(X,1)*0.2);
+m_test=m-m_train-m_validation;
+X_train=X(randrow(1:m_train),:);
+y_train=y(randrow(1:m_train),:);
+X_validation=X(randrow(m_train+1:m_train+m_validation),:);
+y_validation=y(randrow(m_train+1:m_train+m_validation),:);
+X_test=X(randrow(m_train+m_validation+1 : end),:);
+y_test=y(randrow(m_train+m_validation+1 : end),:);
 
 
+% Neural Networks training and fine-tuning
 
-
-for i=1:10  % Ceteris paribus, see how train accuracy and test accuracy react to hidden neurons in each hidden layer.
-
+% train data
+lambda_all = [0, 0.01, 0.03,0.1,0.3,1,3];
+cv_accuracy_init=0; % set initial value of cross validation accuracy before search for the best model parameter
+lambda_best=0.01; % set initial value of best lambda
+hid_layer_best=400; % set initial value of each hidden layer's neurons
+count=0;
+for i=1:3 % Ceteris paribus, see how train accuracy and validation accuracy react to hidden neurons in each hidden layer.
+ for j=1:length(lambda_all)  %Ceteris paribus, see how train accuracy and validation accuracy react to lambda.
+ lambda=lambda_all(j); 
+ hid_layer=i*200+200;
+ 
 % construct 4-layer neural networks and train 
-m=round(size(data,1)*0.8); %train sample size m
+
 
 L1=20; %input layer neurons
-L2=i*100; %hidden layer neurons
-L3=i*100; %hidden layer neurons
+L2=hid_layer; %hidden layer neurons
+L3=hid_layer; %hidden layer neurons
 L4=6;%output layer neurons
 
 rng(180);
@@ -61,21 +76,21 @@ rng(180);
 theta1=2.*rand(L2,L1+1)-1; theta2=2.*rand(L3,L2+1)-1; theta3=2.*rand(L4,L3+1)-1;
 
 
-for mm=1:m
-    for label=1:L4
-        X4_real(mm,label)=(label==y_train(mm,1));
-    end
-end
+% for mm=1:m
+%     for label=1:L4
+%         X4_real(mm,label)=(label==y_train(mm,1));
+%     end
+% end
 
 initial_nn_params = [theta1(:) ; theta2(:); theta3(:)];
 
-lambda = 1;
+
 
 
 %fprintf('Cost at parameters: %f',  nnCostFunction(initial_nn_params, L1, L2, L3, L4, X_train, y_train, lambda)); 
 
 
-options = optimset('MaxIter', 500);
+options = optimset('MaxIter', 1000);
 % Create "short hand" for the cost function to be minimized
 costFunction = @(p) nnCostFunction(p, L1, L2, L3, L4, X_train, y_train, lambda);
 
@@ -86,36 +101,72 @@ theta1 = reshape( nn_params(1:L2 * (L1 + 1)), L2, (L1 + 1)    );
 theta2 = reshape( nn_params( L2 * (L1 + 1)+1 : L2 * (L1 + 1)+ L3*(L2+1)), L3, L2+1 );
 theta3 = reshape( nn_params( L2 * (L1 + 1)+L3*(L2+1)+1 : end), L4, L3+1 );
 
-X1=[ones(m,1) X_train];
-X2=[ones(m,1) sigmoid(X1*theta1') ];
-X3=[ones(m,1) sigmoid(X2*theta2') ];
+X1_validation=[ones(m_train,1) X_train];
+X2=[ones(m_train,1) sigmoid(X1_validation*theta1') ];
+X3=[ones(m_train,1) sigmoid(X2*theta2') ];
 X4=sigmoid(X3*theta3');
-[~,y_pred]=max(X4,[],2);
-train_accuracy(i,1)=sum(y_pred==y_train)/m;
+[~,y_pred_train]=max(X4,[],2);
+train_accuracy(i,j)=mean(y_pred_train==y_train);
 %fprintf('Cost at parameters: %f\n',  nnCostFunction(nn_params, L1, L2, L3, L4, X_train, y_train, lambda));
 %fprintf('Training accuracy: %f\n',  train_accuracy);
 
 
-% test
+% cross validate data
 
-m =  size(data,1) - m ; % test sample size
-X1=[ones(m,1) X_test];
-X2=[ones(m,1) sigmoid(X1*theta1') ];
-X3=[ones(m,1) sigmoid(X2*theta2') ];
+X1_validation=[ones(m_validation,1) X_validation];
+X2=[ones(m_validation,1) sigmoid(X1_validation*theta1') ];
+X3=[ones(m_validation,1) sigmoid(X2*theta2') ];
 X4=sigmoid(X3*theta3');
-[~,y_pred]=max(X4,[],2);
-test_accuracy(i,1)=sum(y_pred==y_test)/m;
+[~,y_pred_validation]=max(X4,[],2);
+validation_accuracy(i,j)=mean(y_pred_validation==y_validation);
 %fprintf('Cost at parameters: %f\n',  nnCostFunction(nn_params, L1, L2, L3, L4, X_test, y_test, lambda));
 %fprintf('Test accuracy: %f\n',  test_accuracy);
+count=count+1;
+fprintf('Iterations: %d\n',  count);
 
-i
+% find optimal model from maximum cross validation accuracy
+if validation_accuracy(i,j) > cv_accuracy_init
+  cv_accuracy_best = validation_accuracy(i,j);
+  lambda_best=lambda;
+  hid_layer_best=hid_layer;
+  theta1_best=theta1;
+  theta2_best=theta2;
+  theta3_best=theta3;
+  nn_params_best=[theta1_best(:) ; theta2_best(:); theta3_best(:)];
+  cv_accuracy_init=validation_accuracy(i,j);
+
+end
+ 
+ end
+
 end
 
 %plot how train accuracy and test accuracy react to hidden neurons in each hidden layer 
-figure; hold on;
-plot(100:100:1000,train_accuracy);
-plot(100:100:1000,test_accuracy);
-legend("train accuracy", "test accuracy","Location","west");
-xlabel('hidden neurons in each hidden layer');
+close; figure(1); hold on;
+plot(lambda_all, train_accuracy(1,:)) ; plot(lambda_all, train_accuracy(2,:)) ; plot(lambda_all, train_accuracy(3,:)) ;
+hold on;
+plot(lambda_all, validation_accuracy(1,:)) ; plot(lambda_all, validation_accuracy(2,:)) ; plot(lambda_all, validation_accuracy(3,:)) ;
+legend( "train accuracy (800 hidden neurons)", "train accuracy (1200 hidden neurons)",...
+    "train accuracy (1600 hidden neurons)",...
+    "validation accuracy (800 hidden neurons)", "validation accuracy (1200 hidden neurons)",...
+    "validation accuracy (1600 hidden neurons)",...
+    "Location","southwest");
+xlabel("lambda");
 ylabel("accuracy");
+title("Model Selection");
 hold off;
+
+
+
+% calculate test accuracy
+X1_test=[ones(m_test,1) X_test];
+X2=[ones(m_test,1) sigmoid(X1_test*theta1_best') ];
+X3=[ones(m_test,1) sigmoid(X2*theta2_best') ];
+X4=sigmoid(X3*theta3_best');
+[~,y_pred_test]=max(X4,[],2);
+test_accuracy=mean(y_pred_test==y_test);
+
+fprintf('Cost at parameters: %f\n',  nnCostFunction(nn_params_best, L1, hid_layer_best, hid_layer_best, L4, X_test, y_test, lambda_best));
+fprintf('Test accuracy is %.3f.\n',  test_accuracy);
+fprintf("Best lambda is %.3f.\n", lambda_best);
+fprintf("Optimal number of hidden neurons is %d.\n", hid_layer_best*2);
